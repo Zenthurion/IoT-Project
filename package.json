@@ -19,8 +19,7 @@
   },
   "nodemonConfig": {
     "watch": [
-      "server",
-      "routes/*"
+      "server"
     ],
     "ignore": [
       "node_modules/"
