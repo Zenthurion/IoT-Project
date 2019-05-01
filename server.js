@@ -3,8 +3,8 @@
 const mosca = require('mosca')
 const winston = require('winston')
 
-const WebSocket = require('ws')
-const wss = new WebSocket.Server({port: 8080})
+//const WebSocket = require('ws')
+//const wss = new WebSocket.Server({port: 8080})
 
 const settings = {
     port:65020
@@ -22,11 +22,11 @@ const logger = winston.createLogger({
     ]
 })
 
-wss.on('connection', ws => {
-    ws.on('message', message => {
-        logger.info('Received message -> ' + message)
-    })
-})
+// wss.on('connection', ws => {
+//     ws.on('message', message => {
+//         logger.info('Received message -> ' + message)
+//     })
+// })
 
 server.on('ready', () => {
     logger.info('ready!')
