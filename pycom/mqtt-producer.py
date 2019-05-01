@@ -17,13 +17,11 @@ last_random_sent_ticks = 0  # milliseconds
 WIFI_SSID = "DarthGuest"
 WIFI_PASS = "" # No this is not our regular password. :)
 
-# Adafruit IO (AIO) configuration
+# Broker settings
 SERVER = "165.22.79.210"
 PORT = 65020
 CLIENT_ID = ubinascii.hexlify(machine.unique_id())  # Can be anything
-
 TEMP_TOPIC = "temp"
-
 # END SETTINGS
 
 # RGBLED
