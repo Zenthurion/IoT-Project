@@ -31,8 +31,6 @@ def connect_wifi():
 # BEGIN SETTINGS
 
 #Light Sensor
-#i2c = I2C(0, I2C.MASTER, baudrate=100000)
-#light_sensor = bh1750fvi.BH1750FVI(i2c, addr=i2c.scan()[0])
 py = Pysense()
 light_sensor = LTR329ALS01.LTR329ALS01(py)
 
@@ -50,9 +48,9 @@ SERVER = "165.22.79.210"
 PORT = 65020
 
 SEP = '/'
-ROOT_TOPIC = DEVICE_BUILDING + SEP + DEVICE_ROOM
-AMBIENT_LIGHT_REQUEST_TOPIC = (ROOT_TOPIC + SEP + "ambient" + SEP + "request").encode('UTF-8')
-AMBIENT_LIGHT_PUBLISH_TOPIC = (ROOT_TOPIC + SEP + "ambient" + SEP + "publish")
+ROOT_TOPIC = DEVICE_BUILDING + SEP + DEVICE_ROOM # building/room
+AMBIENT_LIGHT_REQUEST_TOPIC = (ROOT_TOPIC + SEP + "ambient" + SEP + "request").encode('UTF-8') # building/room/ambient/request
+AMBIENT_LIGHT_PUBLISH_TOPIC = (ROOT_TOPIC + SEP + "ambient" + SEP + "publish") # building/room/ambient/publish
 # END SETTINGS
 
 # Cache
