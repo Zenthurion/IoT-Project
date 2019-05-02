@@ -1,8 +1,17 @@
+# uasyncio.__init__ fast_io
+# (c) 2014-2018 Paul Sokolovsky. MIT license.
+
+# This is a fork of official MicroPython uasynco. It is recommended to use
+# the official version unless the specific features of this fork are required.
+
+# Changes copyright (c) Peter Hinch 2018
+# Code at https://github.com/peterhinch/micropython-async.git
+# fork: peterhinch/micropython-lib branch: uasyncio-io-fast-and-rw
+
 import uerrno
 import uselect as select
 import usocket as _socket
 from uasyncio.core import *
-
 
 DEBUG = 0
 log = None
@@ -14,53 +23,68 @@ def set_debug(val):
         import logging
         log = logging.getLogger("uasyncio")
 
-
+# add_writer causes read failure if passed the same sock instance as was passed
+# to add_reader. Cand we fix this by maintaining two object maps?
 class PollEventLoop(EventLoop):
 
-    def __init__(self, runq_len=16, waitq_len=16):
-        EventLoop.__init__(self, runq_len, waitq_len)
+    def __init__(self, runq_len=16, waitq_len=16, fast_io=0, lp_len=0):
+        EventLoop.__init__(self, runq_len, waitq_len, fast_io, lp_len)
         self.poller = select.poll()
-        self.objmap = {}
+        self.rdobjmap = {}
+        self.wrobjmap = {}
+        self.flags = {}
+
+    # Remove registration of sock for reading or writing.
+    def _unregister(self, sock, objmap, flag):
+        # If StreamWriter.awrite() wrote entire buf on 1st pass sock will never
+        # have been registered. So test for presence in .flags.
+        if id(sock) in self.flags:
+            flags = self.flags[id(sock)]
+            if flags & flag:  # flag is currently registered
+                flags &= ~flag  # Clear current flag
+                if flags:  # Another flag is present
+                    self.flags[id(sock)] = flags
+                    self.poller.register(sock, flags)
+                else:
+                    del self.flags[id(sock)]  # Clear all flags
+                    self.poller.unregister(sock)
+                del objmap[id(sock)]  # Remove coro from appropriate dict
+
+    # Additively register sock for reading or writing
+    def _register(self, sock, flag):
+        if id(sock) in self.flags:
+            self.flags[id(sock)] |= flag
+        else:
+            self.flags[id(sock)] = flag
+        self.poller.register(sock, self.flags[id(sock)])
 
     def add_reader(self, sock, cb, *args):
         if DEBUG and __debug__:
             log.debug("add_reader%s", (sock, cb, args))
+        self._register(sock, select.POLLIN)
         if args:
-            self.poller.register(sock, select.POLLIN)
-            self.objmap[id(sock)] = (cb, args)
+            self.rdobjmap[id(sock)] = (cb, args)
         else:
-            self.poller.register(sock, select.POLLIN)
-            self.objmap[id(sock)] = cb
+            self.rdobjmap[id(sock)] = cb
 
     def remove_reader(self, sock):
         if DEBUG and __debug__:
             log.debug("remove_reader(%s)", sock)
-        self.poller.unregister(sock)
-        del self.objmap[id(sock)]
+        self._unregister(sock, self.rdobjmap, select.POLLIN)
 
     def add_writer(self, sock, cb, *args):
         if DEBUG and __debug__:
             log.debug("add_writer%s", (sock, cb, args))
+        self._register(sock, select.POLLOUT)
         if args:
-            self.poller.register(sock, select.POLLOUT)
-            self.objmap[id(sock)] = (cb, args)
+            self.wrobjmap[id(sock)] = (cb, args)
         else:
-            self.poller.register(sock, select.POLLOUT)
-            self.objmap[id(sock)] = cb
+            self.wrobjmap[id(sock)] = cb
 
     def remove_writer(self, sock):
         if DEBUG and __debug__:
             log.debug("remove_writer(%s)", sock)
-        try:
-            self.poller.unregister(sock)
-            self.objmap.pop(id(sock), None)
-        except OSError as e:
-            # StreamWriter.awrite() first tries to write to a socket,
-            # and if that succeeds, yield IOWrite may never be called
-            # for that socket, and it will never be added to poller. So,
-            # ignore such error.
-            if e.args[0] != uerrno.ENOENT:
-                raise
+        self._unregister(sock, self.wrobjmap, select.POLLOUT)
 
     def wait(self, delay):
         if DEBUG and __debug__:
@@ -68,11 +92,37 @@ class PollEventLoop(EventLoop):
         # We need one-shot behavior (second arg of 1 to .poll())
         res = self.poller.ipoll(delay, 1)
         #log.debug("poll result: %s", res)
-        # Remove "if res" workaround after
-        # https://github.com/micropython/micropython/issues/2716 fixed.
-        if res:
-            for sock, ev in res:
-                cb = self.objmap[id(sock)]
+        for sock, ev in res:
+            if ev & select.POLLOUT:
+                cb = self.wrobjmap[id(sock)]
+                if cb is None:
+                    continue  # Not yet ready.
+                # Invalidate objmap: can get adverse timing in fast_io whereby add_writer
+                # is not called soon enough. Ignore poll events occurring before we are
+                # ready to handle them.
+                self.wrobjmap[id(sock)] = None
+                if ev & (select.POLLHUP | select.POLLERR):
+                    # These events are returned even if not requested, and
+                    # are sticky, i.e. will be returned again and again.
+                    # If the caller doesn't do proper error handling and
+                    # unregister this sock, we'll busy-loop on it, so we
+                    # as well can unregister it now "just in case".
+                    self.remove_writer(sock)
+                if DEBUG and __debug__:
+                    log.debug("Calling IO callback: %r", cb)
+                if isinstance(cb, tuple):
+                    cb[0](*cb[1])
+                else:
+                    prev = cb.pend_throw(None)  # Enable task to run.
+                    #if isinstance(prev, Exception):
+                        #print('Put back exception')
+                        #cb.pend_throw(prev)
+                    self._call_io(cb)  # Put coro onto runq (or ioq if one exists)
+            if ev & select.POLLIN:
+                cb = self.rdobjmap[id(sock)]
+                if cb is None:
+                    continue
+                self.rdobjmap[id(sock)] = None
                 if ev & (select.POLLHUP | select.POLLERR):
                     # These events are returned even if not requested, and
                     # are sticky, i.e. will be returned again and again.
@@ -85,8 +135,11 @@ class PollEventLoop(EventLoop):
                 if isinstance(cb, tuple):
                     cb[0](*cb[1])
                 else:
-                    cb.pend_throw(None)
-                    self.call_soon(cb)
+                    prev = cb.pend_throw(None)  # Enable task to run.
+                    #if isinstance(prev, Exception):
+                        #cb.pend_throw(prev)
+                        #print('Put back exception')
+                    self._call_io(cb)
 
 
 class StreamReader:
@@ -100,15 +153,16 @@ class StreamReader:
     def read(self, n=-1):
         while True:
             yield IORead(self.polls)
-            res = self.ios.read(n)
+            res = self.ios.read(n)  # Call the device's read method
             if res is not None:
                 break
             # This should not happen for real sockets, but can easily
             # happen for stream wrappers (ssl, websockets, etc.)
             #log.warn("Empty read")
-        if not res:
-            yield IOReadDone(self.polls)
-        return res
+        yield IOReadDone(self.polls)  # uasyncio.core calls remove_reader
+        # This de-registers device as a read device with poll via
+        # PollEventLoop._unregister
+        return res  # Next iteration raises StopIteration and returns result
 
     def readexactly(self, n):
         buf = b""
@@ -117,10 +171,10 @@ class StreamReader:
             res = self.ios.read(n)
             assert res is not None
             if not res:
-                yield IOReadDone(self.polls)
                 break
             buf += res
             n -= len(res)
+        yield IOReadDone(self.polls)
         return buf
 
     def readline(self):
@@ -132,13 +186,13 @@ class StreamReader:
             res = self.ios.readline()
             assert res is not None
             if not res:
-                yield IOReadDone(self.polls)
                 break
             buf += res
             if buf[-1] == 0x0a:
                 break
         if DEBUG and __debug__:
             log.debug("StreamReader.readline(): %s", buf)
+        yield IOReadDone(self.polls)
         return buf
 
     def aclose(self):
@@ -171,6 +225,7 @@ class StreamWriter:
             if res == sz:
                 if DEBUG and __debug__:
                     log.debug("StreamWriter.awrite(): completed spooling %d bytes", res)
+                yield IOWriteDone(self.s)  # remove_writer de-registers device as a writer
                 return
             if res is None:
                 res = 0
