@@ -1,17 +1,35 @@
 # https://github.com/micropython/micropython-lib/blob/master/umqtt.simple/example_sub_led.py
 
-from network import WLAN      # For operation of WiFi network
 import time                   # Allows use of time.sleep() for delays
 import pycom                  # Base library for Pycom devices
 from mqtt import MQTTClient  # For use of MQTT protocol to talk to Adafruit IO
 import ubinascii              # Needed to run any MicroPython code
 import machine                # Interfaces with hardware components
 import micropython            # Needed to run any MicroPython code
-#import bh1750fvi
 from pysense import Pysense
 import LTR329ALS01
-
+import ujson as json
 import uasyncio as asyncio
+
+# boot.py -- run on boot-up
+from network import WLAN      # For operation of WiFi network
+import time                   # Allows use of time.sleep() for delays
+
+# Wireless network
+def connect_wifi():
+    WIFI_SSID = "DarthGuest"
+    WIFI_PASS = ""
+
+    # WIFI
+    wlan = WLAN(mode=WLAN.STA)
+    wlan.connect(WIFI_SSID, timeout=5000)
+    time.sleep(3)
+
+    while not wlan.isconnected(): # Code waits here until WiFi connects
+        machine.idle()
+
+    print("Connected to Wifi")
+#connect_wifi() # only run if you run the file directly. When uploaded boot.py manages this
 
 # BEGIN SETTINGS
 
@@ -30,10 +48,6 @@ DEVICE_BUILDING = "home"
 DEVICE_ROOM = "living-room"
 DEVICE_ID = ubinascii.hexlify(machine.unique_id())  # Can be anything
 
-# Wireless network
-WIFI_SSID = "DarthGuest"
-WIFI_PASS = "" # No this is not our regular password. :)
-
 # Broker settings
 SERVER = "165.22.79.210"
 PORT = 65020
@@ -47,65 +61,84 @@ AMBIENT_LIGHT_PUBLISH_TOPIC = (ROOT_TOPIC + SEP + "ambient" + SEP + "publish")
 # Cache
 is_sampling = False
 last_sample = None
+time_to_next = 0
+cache_created = 0
+
+loop = asyncio.get_event_loop()
 
 # RGBLED
 pycom.heartbeat(False)
 time.sleep(0.1) # Workaround for a bug.
 pycom.rgbled(0xff0000)  # Status red = not working
 
-# WIFI
-wlan = WLAN(mode=WLAN.STA)
-wlan.connect(WIFI_SSID, timeout=5000)
-time.sleep(3)
 
-while not wlan.isconnected(): # Code waits here until WiFi connects
-    machine.idle()
-
-print("Connected to Wifi")
 pycom.rgbled(0xffd700) # Status orange: partially working
 
 # FUNCTIONS
 def subscribe_request_ambient_light(topic, msg):
     if(topic == AMBIENT_LIGHT_REQUEST_TOPIC):
-        publish_ambient_light()
+        try:
+            msg = json.loads(msg)
+            loop.create_task(publish_ambient_light(msg))
+        except:
+            print('invalid message format')
 
-def sample_ambient_light():
+def get_cache_age():
+    return time.ticks_diff(cache_created, time.ticks_ms())
+
+async def get_reply_msg(val, is_cache):
+    msg = {}
+    msg['value'] = val
+    msg['age'] = get_cache_age()
+    msg['isCache'] = is_cache
+    return json.dumps(msg)
+
+async def sample_ambient_light():
+    global is_sampling, last_sample, time_to_next, cache_created
     is_sampling = True
     samples = []
 
-    duration = SAMPLING_DURATION
-    while(duration > 0):
-        print('sampling...')
+    time_to_next = SAMPLING_DURATION
+    while(time_to_next > 0.001):
         samples.append(light_sensor.light())
-        duration -= SAMPLING_STEP
-        #await asyncio.sleep(SAMPLING_STEP)
-        time.sleep(SAMPLING_STEP)
-        #client.check_msg() # causes stack overflow
+        time_to_next -= SAMPLING_STEP
+        await asyncio.sleep(SAMPLING_STEP)
 
     res = 0
     for s in samples:
         res += s[0]
-        print(s)
 
     res /= SAMPLES_COUNT
 
     last_sample = res
+    cache_created = time.ticks_ms()
+    client.publish(topic=AMBIENT_LIGHT_PUBLISH_TOPIC, msg=get_reply_msg(res, False))
     is_sampling = False
     return res
 
-def publish_ambient_light():
-    if is_sampling:
-        if(last_sample == None):
-            print('no cache available')
-            return
-        client.publish(topic=AMBIENT_LIGHT_PUBLISH_TOPIC, msg=str(last_sample))
-        print('using cache')
+async def timeout(duration):
+    await asyncio.sleep(duration)
+
+async def check_for_messages():
+    while(True):
+        await asyncio.sleep(1)
+        client.check_msg()
+
+'''
+{
+    acceptedAge: 5000
+}
+'''
+async def publish_ambient_light(msg):
+    global is_sampling
+
+    if(get_cache_age() < int(msg['acceptedAge'])):
+        if is_sampling and last_sample is not None:
+            client.publish(topic=AMBIENT_LIGHT_PUBLISH_TOPIC, msg=get_reply_msg(last_sample, True))
+        else:
+            loop.create_task(sample_ambient_light())
     else:
-        print('awaiting')
-        #val = await sample_ambient_light()
-        val = sample_ambient_light()
-        client.publish(topic=AMBIENT_LIGHT_PUBLISH_TOPIC, msg=str(val))
-        print('published new sample')
+        loop.create_task(sample_ambient_light())
 
 
 client = MQTTClient(DEVICE_ID, SERVER, PORT)
@@ -116,13 +149,5 @@ print("Connected to %s, subscribed to %s" % (SERVER, AMBIENT_LIGHT_REQUEST_TOPIC
 
 pycom.rgbled(0x006000) # Status green: connected successfully to broker
 
-try:
-    while 1:
-        client.check_msg()
-finally:
-    client.disconnect()
-    client = None
-    wlan.disconnect()
-    wlan = None
-    pycom.rgbled(0x000022) # Status blue: stopped
-    print("Disconnected from server and wlan")
+loop.create_task(check_for_messages()) # Required for new messages to be processedé
+loop.run_forever()
