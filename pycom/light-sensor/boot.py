@@ -1,4 +1,9 @@
 # boot.py -- run on boot-up
+
+import pycom
+import ubinascii
+import machine
+import micropython
 from network import WLAN      # For operation of WiFi network
 import time                   # Allows use of time.sleep() for delays
 

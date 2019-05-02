@@ -75,15 +75,16 @@ pycom.rgbled(0xffd700) # Status orange: partially working
 def subscribe_request_ambient_light(topic, msg):
     if(topic == AMBIENT_LIGHT_REQUEST_TOPIC):
         try:
+            msg = msg.decode('UTF-8')
             msg = json.loads(msg)
             loop.create_task(publish_ambient_light(msg))
         except:
             print('invalid message format')
 
 def get_cache_age():
-    return time.ticks_diff(cache_created, time.ticks_ms())
+    return time.ticks_diff(time.ticks_ms(), cache_created)
 
-async def get_reply_msg(val, is_cache):
+def get_reply_msg(val, is_cache):
     msg = {}
     msg['value'] = val
     msg['age'] = get_cache_age()
@@ -111,7 +112,6 @@ async def sample_ambient_light():
     cache_created = time.ticks_ms()
     client.publish(topic=AMBIENT_LIGHT_PUBLISH_TOPIC, msg=get_reply_msg(res, False))
     is_sampling = False
-    return res
 
 async def timeout(duration):
     await asyncio.sleep(duration)
@@ -121,19 +121,11 @@ async def check_for_messages():
         await asyncio.sleep(1)
         client.check_msg()
 
-'''
-{
-    acceptedAge: 5000
-}
-'''
 async def publish_ambient_light(msg):
     global is_sampling
-
-    if(get_cache_age() < int(msg['acceptedAge'])):
-        if is_sampling and last_sample is not None:
-            client.publish(topic=AMBIENT_LIGHT_PUBLISH_TOPIC, msg=get_reply_msg(last_sample, True))
-        else:
-            loop.create_task(sample_ambient_light())
+    age = get_cache_age()
+    if (is_sampling or age < msg['acceptedAge']) and last_sample is not None:
+        client.publish(topic=AMBIENT_LIGHT_PUBLISH_TOPIC, msg=get_reply_msg(last_sample, True))
     else:
         loop.create_task(sample_ambient_light())
 
