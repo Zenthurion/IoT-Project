@@ -15,6 +15,6 @@ client.on('message', (topic, message) => {
 
 let id = setInterval(() => {
     //let value = Math.floor(Math.random() * 60) - 20
-    client.publish('home/living-room/ambient/request', "")
+    client.publish('home/living-room/ambient/request', JSON.stringify({ acceptedAge: 25000 }))
     console.log("Requesting ambient light")
-}, 2500)
+}, 7500)
