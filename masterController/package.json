@@ -1,0 +1,12 @@
+{
+  "name": "Master Controller",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "start": "node src/app.js"
+  },
+  "dependencies": {
+    "mqtt": "^2.18.8",
+    "timerjobs": "^1.4.2"
+  }
+}
