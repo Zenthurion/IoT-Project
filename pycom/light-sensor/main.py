@@ -26,7 +26,7 @@ def connect_wifi():
         machine.idle()
 
     print("Connected to Wifi")
-#connect_wifi() # only run if you run the file directly. When uploaded boot.py manages this
+# connect_wifi() # only run if you run the file directly. When uploaded boot.py manages this
 
 # BEGIN SETTINGS
 
@@ -52,6 +52,8 @@ SEP = '/'
 ROOT_TOPIC = DEVICE_BUILDING + SEP + DEVICE_ROOM # building/room
 AMBIENT_LIGHT_REQUEST_TOPIC = (ROOT_TOPIC + SEP + DEVICE_TYPE + SEP + "collect").encode('UTF-8') # building/room/ambient-light/collect
 AMBIENT_LIGHT_PUBLISH_TOPIC = (ROOT_TOPIC + SEP + DEVICE_TYPE + SEP + "publish") # building/room/ambient-light/publish
+REGISTRATION_TOPIC = 'device-registration'
+RE_REGISTRATION_TOPIC = 'registration-request'.encode('UTF-8')
 # END SETTINGS
 
 # Cache
@@ -153,7 +155,7 @@ client.subscribe(RE_REGISTRATION_TOPIC)
 register()
 print("Connected to %s, subscribed to %s" % (SERVER, AMBIENT_LIGHT_REQUEST_TOPIC))
 
-pycom.rgbled(0x006000) # Status green: connected successfully to broker
+pycom.rgbled(0x000000) # Status green: connected successfully to broker
 
 loop.create_task(check_for_messages()) # Required for new messages to be processedé
 loop.run_forever()
