@@ -42,6 +42,7 @@ SAMPLES_COUNT = SAMPLING_DURATION / SAMPLING_STEP
 DEVICE_BUILDING = "home"
 DEVICE_ROOM = "living-room"
 DEVICE_ID = ubinascii.hexlify(machine.unique_id())  # Can be anything
+DEVICE_TYPE = 'ambient-light-sensor'
 
 # Broker settings
 SERVER = "165.22.79.210"
@@ -49,8 +50,8 @@ PORT = 65020
 
 SEP = '/'
 ROOT_TOPIC = DEVICE_BUILDING + SEP + DEVICE_ROOM # building/room
-AMBIENT_LIGHT_REQUEST_TOPIC = (ROOT_TOPIC + SEP + "ambient" + SEP + "request").encode('UTF-8') # building/room/ambient/request
-AMBIENT_LIGHT_PUBLISH_TOPIC = (ROOT_TOPIC + SEP + "ambient" + SEP + "publish") # building/room/ambient/publish
+AMBIENT_LIGHT_REQUEST_TOPIC = (ROOT_TOPIC + SEP + DEVICE_TYPE + SEP + "collect").encode('UTF-8') # building/room/ambient-light/collect
+AMBIENT_LIGHT_PUBLISH_TOPIC = (ROOT_TOPIC + SEP + DEVICE_TYPE + SEP + "publish") # building/room/ambient-light/publish
 # END SETTINGS
 
 # Cache
@@ -71,7 +72,9 @@ pycom.rgbled(0xffd700) # Status orange: partially working
 
 # FUNCTIONS
 def subscribe_request_ambient_light(topic, msg):
-    if(topic == AMBIENT_LIGHT_REQUEST_TOPIC):
+    if topic == RE_REGISTRATION_TOPIC:
+        register()
+    elif topic == AMBIENT_LIGHT_REQUEST_TOPIC:
         try:
             msg = msg.decode('UTF-8')
             msg = json.loads(msg)
@@ -84,10 +87,24 @@ def get_cache_age():
 
 def get_reply_msg(val, is_cache):
     msg = {}
+    msg['location'] = ROOT_TOPIC
+    msg['id'] = DEVICE_ID
+    msg['sensor'] = DEVICE_TYPE
     msg['value'] = val
     msg['age'] = get_cache_age()
     msg['isCache'] = is_cache
     return json.dumps(msg)
+
+def registration_msg():
+    msg = {}
+    msg['id'] = DEVICE_ID
+    msg['location'] = ROOT_TOPIC
+    msg['deviceType'] = DEVICE_TYPE
+
+    return json.dumps(msg)
+
+def register():
+    client.publish(topic=REGISTRATION_TOPIC, msg=registration_msg())
 
 async def sample_ambient_light():
     global is_sampling, last_sample, time_to_next, cache_created
@@ -95,7 +112,7 @@ async def sample_ambient_light():
     samples = []
 
     time_to_next = SAMPLING_DURATION
-    while(time_to_next > 0.001):
+    while time_to_next > 0.001:
         samples.append(light_sensor.light())
         time_to_next -= SAMPLING_STEP
         await asyncio.sleep(SAMPLING_STEP)
@@ -115,7 +132,7 @@ async def timeout(duration):
     await asyncio.sleep(duration)
 
 async def check_for_messages():
-    while(True):
+    while True:
         await asyncio.sleep(1)
         client.check_msg()
 
@@ -132,6 +149,8 @@ client = MQTTClient(DEVICE_ID, SERVER, PORT)
 client.set_callback(subscribe_request_ambient_light)
 client.connect()
 client.subscribe(AMBIENT_LIGHT_REQUEST_TOPIC)
+client.subscribe(RE_REGISTRATION_TOPIC)
+register()
 print("Connected to %s, subscribed to %s" % (SERVER, AMBIENT_LIGHT_REQUEST_TOPIC))
 
 pycom.rgbled(0x006000) # Status green: connected successfully to broker
