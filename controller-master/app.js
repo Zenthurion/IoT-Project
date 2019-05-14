@@ -1,6 +1,7 @@
 const TimerJob = require( 'timerjobs' ).TimerJobs;
 const mqtt = require('mqtt');
 const client = mqtt.connect('http://165.22.79.210:65020');
+const gatewayClient = mqtt.connect('http://165.22.79.210:65023');
 
 const topics = {
     sub: {
@@ -32,6 +33,8 @@ client.on('connect', () => {
 });
 
 function subscribe() {
+    gatewayClient.subscribe(topics.sub.interface);
+
     client.subscribe(topics.sub.interface);
     client.subscribe(topics.sub.registration);
     client.subscribe(topics.sub.statusRequest);
@@ -42,7 +45,14 @@ function subscribe() {
     console.log('> ' + topics.sub.statusRequest);
     console.log()
 }
-
+gatewayClient.on('message', (topic, data) => {
+    const message = JSON.parse(data);
+    if(topic === topics.sub.interface) // Interface command received from gateway - add filtering to reduce potential external instructions
+    {
+        console.log('> received interface command from gateway: \n\t' + data);
+        interfaceCommand(message);
+    }
+});
 client.on('message', (topic, data) => {
     const message = JSON.parse(data);
     if(topic === topics.sub.interface) // Interface command received
@@ -92,6 +102,8 @@ function interfaceCommand(message) {
         room.configure(message.data)
     }
 
+    sendStatusUpdateAll();
+
     function validateInterfaceCommand(message) {
         if(message.hasOwnProperty('topic') && message.hasOwnProperty('data')) {
             if(message.data.hasOwnProperty('type') && message.data.type === 'light') {
@@ -135,33 +147,9 @@ function statusRequestCommand(message) {
     if(!validateStatusRequest(message)) return;
 
     if(message.location === 'all') {
-        let entities = [];
-        for(let e in controller.children) {
-            entities.push(e);
-        }
-        let msg = {
-            "type": 'all',
-            "identifiers": entities,
-            "entities": controller.children
-        };
-        client.publish(topics.pub.status, JSON.stringify(msg))
+        sendStatusUpdateAll()
     } else {
-        if(!controller.children.hasOwnProperty(message.location)) {
-            let msg = {
-                type: 'single',
-                identifier: message.location,
-                entity: undefined
-            };
-            client.publish(topics.pub.status, JSON.stringify(msg))
-        } else {
-            let entity = controller.children[message.location];
-            let msg = {
-                type: 'single',
-                identifier: entity.identifier,
-                entity: entity
-            };
-            client.publish(topics.pub.status, JSON.stringify(msg))
-        }
+        sendStatusUpdateIndividual(message.location)
     }
     console.log('status returned');
 
@@ -192,6 +180,38 @@ function sensorDataReceived(message) {
         return message.hasOwnProperty('location') && message.hasOwnProperty('id')
             && message.hasOwnProperty('sensor') && message.hasOwnProperty('value')
             && message.hasOwnProperty('age') && message.hasOwnProperty('isCache')
+    }
+}
+
+function sendStatusUpdateAll() {
+    let entities = [];
+    for(let e in controller.children) {
+        entities.push(e);
+    }
+    let msg = {
+        "type": 'all',
+        "identifiers": entities,
+        "entities": controller.children
+    };
+    client.publish(topics.pub.status, JSON.stringify(msg))
+}
+
+function sendStatusUpdateIndividual(location) {
+    if(!controller.children.hasOwnProperty(location)) {
+        let msg = {
+            type: 'single',
+            identifier: location,
+            entity: undefined
+        };
+        client.publish(topics.pub.status, JSON.stringify(msg))
+    } else {
+        let entity = controller.children[location];
+        let msg = {
+            type: 'single',
+            identifier: entity.identifier,
+            entity: entity
+        };
+        client.publish(topics.pub.status, JSON.stringify(msg))
     }
 }
 

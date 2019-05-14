@@ -8,7 +8,6 @@ import machine
 import micropython
 from pysense import Pysense
 import ujson as json
-import uasyncio as asyncio
 
 # Wireless network
 def connect_wifi():
